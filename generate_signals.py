@@ -4,6 +4,7 @@ from datetime import datetime, timezone, timedelta
 
 IST = timezone(timedelta(hours=5, minutes=30))
 generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S IST')
+
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY = 2.0
@@ -37,7 +38,6 @@ for _, row in qualified.iterrows():
     latest_z = z.iloc[-1]
     this_date = z.index[-1].date()
 
-    # track the most recent market date seen across all pairs, for the header
     if latest_market_date is None or this_date > latest_market_date:
         latest_market_date = this_date
 
@@ -59,20 +59,16 @@ daily_signals = pd.DataFrame(signal_rows)
 if len(daily_signals):
     daily_signals = daily_signals.sort_values('current_z', key=abs, ascending=False)
 
-generated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
 with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
-    # header block above the actual signal table
     header_df = pd.DataFrame({
         'Info': [
             f'Signals as of market close: {latest_market_date}',
-            f'Sheet generated at: {generated_at}',
+            f'Sheet generated at: {generated_at_ist}',
             f'Active signals: {len(daily_signals)}'
         ]
     })
     header_df.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, header=False, startrow=0)
     daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=5)
-
     backtest_summary.to_excel(writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
 print(f"Signals as of {latest_market_date}, generated at {generated_at_ist}")
