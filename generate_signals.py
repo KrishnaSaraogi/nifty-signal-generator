@@ -1,7 +1,9 @@
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
+IST = timezone(timedelta(hours=5, minutes=30))
+generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S IST')
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY = 2.0
@@ -73,5 +75,5 @@ with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
 
     backtest_summary.to_excel(writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
-print(f"Signals as of {latest_market_date}, generated at {generated_at}")
+print(f"Signals as of {latest_market_date}, generated at {generated_at_ist}")
 print(f"Active signals today: {len(daily_signals)}")
