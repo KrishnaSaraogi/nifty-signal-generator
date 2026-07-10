@@ -5,6 +5,9 @@ on:
     - cron: '30 10 * * 1-5'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   generate-signals:
     runs-on: ubuntu-latest
@@ -15,7 +18,13 @@ jobs:
           python-version: '3.11'
       - run: pip install -r requirements.txt
       - name: Run signal generator
-        env:
-          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
-          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         run: python generate_signals.py
+      - name: Publish to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest-signals --yes || true
+          git push origin :refs/tags/latest-signals || true
+          gh release create latest-signals daily_signal_sheet.xlsx \
+            --title "Daily Signals - $(date +'%Y-%m-%d')" \
+            --notes "Auto-generated $(date)"
