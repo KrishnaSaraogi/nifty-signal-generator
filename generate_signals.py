@@ -1,7 +1,6 @@
-import os
 import yfinance as yf
 import pandas as pd
-import subprocess
+from datetime import datetime
 
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
@@ -20,6 +19,8 @@ for t in all_tickers:
         prices[t] = data
 
 signal_rows = []
+latest_market_date = None
+
 for _, row in qualified.iterrows():
     a, b = row['stock_a'], row['stock_b']
     if a not in prices or b not in prices:
@@ -32,13 +33,18 @@ for _, row in qualified.iterrows():
     roll_std = ratio.rolling(ROLLING_WINDOW_DAYS).std()
     z = (ratio - roll_mean) / roll_std
     latest_z = z.iloc[-1]
+    this_date = z.index[-1].date()
+
+    # track the most recent market date seen across all pairs, for the header
+    if latest_market_date is None or this_date > latest_market_date:
+        latest_market_date = this_date
 
     if abs(latest_z) <= Z_ENTRY:
         continue
 
     signal_rows.append({
         'sector': row['sector'], 'pair': f'{a}/{b}',
-        'as_of_close_date': z.index[-1].date(),
+        'signal_date': this_date,
         'current_ratio': round(ratio.iloc[-1], 4),
         'current_z': round(latest_z, 2),
         'signal_for_next_open': 'SHORT_A_LONG_B' if latest_z > 0 else 'LONG_A_SHORT_B',
@@ -51,8 +57,21 @@ daily_signals = pd.DataFrame(signal_rows)
 if len(daily_signals):
     daily_signals = daily_signals.sort_values('current_z', key=abs, ascending=False)
 
+generated_at = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
 with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
-    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False)
+    # header block above the actual signal table
+    header_df = pd.DataFrame({
+        'Info': [
+            f'Signals as of market close: {latest_market_date}',
+            f'Sheet generated at: {generated_at}',
+            f'Active signals: {len(daily_signals)}'
+        ]
+    })
+    header_df.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, header=False, startrow=0)
+    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=5)
+
     backtest_summary.to_excel(writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
+print(f"Signals as of {latest_market_date}, generated at {generated_at}")
 print(f"Active signals today: {len(daily_signals)}")
