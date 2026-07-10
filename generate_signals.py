@@ -1,10 +1,7 @@
 import os
-import json
 import yfinance as yf
 import pandas as pd
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
+import subprocess
 
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
@@ -59,21 +56,3 @@ with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
     backtest_summary.to_excel(writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
 print(f"Active signals today: {len(daily_signals)}")
-
-creds_json = json.loads(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'])
-creds = service_account.Credentials.from_service_account_info(
-    creds_json, scopes=['https://www.googleapis.com/auth/drive'])
-service = build('drive', 'v3', credentials=creds)
-folder_id = os.environ['DRIVE_FOLDER_ID']
-
-query = f"name='{OUTPUT_FILE}' and '{folder_id}' in parents and trashed=false"
-existing = service.files().list(q=query, fields='files(id)').execute().get('files', [])
-media = MediaFileUpload(OUTPUT_FILE,
-    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-
-if existing:
-    service.files().update(fileId=existing[0]['id'], media_body=media).execute()
-    print("Overwrote existing file on Drive.")
-else:
-    service.files().create(body={'name': OUTPUT_FILE, 'parents': [folder_id]}, media_body=media, fields='id').execute()
-    print("Created new file on Drive.")
