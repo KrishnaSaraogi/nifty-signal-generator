@@ -1,6 +1,7 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from openpyxl import load_workbook
 
 IST = timezone(timedelta(hours=5, minutes=30))
 generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d %H:%M:%S IST')
@@ -8,11 +9,22 @@ generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY = 2.0
-MIN_SIGNALS_TO_SHOW = 15
+MIN_SIGNALS_TO_SHOW = 15  # reliability floor, checked against the z=2.0 sample size
 OUTPUT_FILE = 'daily_signal_sheet.xlsx'
 
+# backtest_reference.csv is now the WIDE z-sweep summary:
+# columns: pair, n_z2.0, winrate_z2.0_%, avgpnl_z2.0_%, n_z2.5, winrate_z2.5_%, ... etc.
 backtest_summary = pd.read_csv('backtest_reference.csv')
-qualified = backtest_summary[backtest_summary['n_signals'] >= MIN_SIGNALS_TO_SHOW]
+
+def parse_pair(pair_str):
+    sector, tickers = pair_str.split(' | ')
+    a, b = tickers.split('/')
+    return sector, a, b
+
+backtest_summary[['sector', 'stock_a', 'stock_b']] = backtest_summary['pair'].apply(
+    lambda p: pd.Series(parse_pair(p)))
+
+qualified = backtest_summary[backtest_summary['n_z2.0'] >= MIN_SIGNALS_TO_SHOW].copy()
 
 all_tickers = pd.unique(qualified[['stock_a', 'stock_b']].values.ravel())
 prices = {}
@@ -22,8 +34,6 @@ for t in all_tickers:
         prices[t] = data
 
 signal_rows = []
-latest_market_date = None
-
 for _, row in qualified.iterrows():
     a, b = row['stock_a'], row['stock_b']
     if a not in prices or b not in prices:
@@ -36,23 +46,14 @@ for _, row in qualified.iterrows():
     roll_std = ratio.rolling(ROLLING_WINDOW_DAYS).std()
     z = (ratio - roll_mean) / roll_std
     latest_z = z.iloc[-1]
-    this_date = z.index[-1].date()
-
-    if latest_market_date is None or this_date > latest_market_date:
-        latest_market_date = this_date
 
     if abs(latest_z) <= Z_ENTRY:
         continue
 
     signal_rows.append({
-        'sector': row['sector'], 'pair': f'{a}/{b}',
-        'signal_date': this_date,
+        'pair': row['pair'],   # exact match to the 'pair' string in BACKTEST_REFERENCE, used for the link
         'current_ratio': round(ratio.iloc[-1], 4),
-        'current_z': round(latest_z, 2),
-        'signal_for_next_open': 'SHORT_A_LONG_B' if latest_z > 0 else 'LONG_A_SHORT_B',
-        'backtest_n_signals': row['n_signals'],
-        'backtest_win_rate_%': row['win_rate_%'],
-        'backtest_avg_pnl_%': row['avg_pnl_%']
+        'current_z': round(latest_z, 2)
     })
 
 daily_signals = pd.DataFrame(signal_rows)
@@ -62,14 +63,41 @@ if len(daily_signals):
 with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
     header_df = pd.DataFrame({
         'Info': [
-            f'Signals as of market close: {latest_market_date}',
             f'Sheet generated at: {generated_at_ist}',
             f'Active signals: {len(daily_signals)}'
         ]
     })
     header_df.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, header=False, startrow=0)
-    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=5)
-    backtest_summary.to_excel(writer, sheet_name='BACKTEST_REFERENCE', index=False)
+    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=3)
+    backtest_summary.drop(columns=['stock_a', 'stock_b']).to_excel(
+        writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
-print(f"Signals as of {latest_market_date}, generated at {generated_at_ist}")
+# ── ADD HYPERLINKS: clicking a pair in SIGNALS_TODAY jumps to its row in BACKTEST_REFERENCE ──
+wb = load_workbook(OUTPUT_FILE)
+ws_signals = wb['SIGNALS_TODAY']
+ws_ref = wb['BACKTEST_REFERENCE']
+
+ref_pair_col = None
+for col_cells in ws_ref.iter_cols(1, ws_ref.max_column):
+    if col_cells[0].value == 'pair':
+        ref_pair_col = col_cells[0].column_letter
+        break
+
+pair_to_row = {}
+for r in range(2, ws_ref.max_row + 1):
+    val = ws_ref[f'{ref_pair_col}{r}'].value
+    if val:
+        pair_to_row[val] = r
+
+signal_header_row = 4  # header lands here since startrow=3 (0-indexed) -> Excel row 4
+for r in range(signal_header_row + 1, ws_signals.max_row + 1):
+    pair_cell = ws_signals[f'A{r}']
+    pair_val = pair_cell.value
+    if pair_val in pair_to_row:
+        target_row = pair_to_row[pair_val]
+        pair_cell.hyperlink = f"#'BACKTEST_REFERENCE'!A{target_row}"
+        pair_cell.style = 'Hyperlink'
+
+wb.save(OUTPUT_FILE)
+
 print(f"Active signals today: {len(daily_signals)}")
