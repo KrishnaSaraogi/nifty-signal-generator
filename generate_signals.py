@@ -9,7 +9,8 @@ generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY_LEVELS = [2.0, 2.5, 3.0, 3.5]
-MIN_AVG_PNL_PCT = 0.0  # only show if avg P&L at the applicable level is positive
+WIN_RATE_THRESHOLD = 75.0
+MIN_AVG_PNL_PCT = 0.0
 OUTPUT_FILE = 'daily_signal_sheet.xlsx'
 
 backtest_summary = pd.read_csv('backtest_reference.csv')
@@ -55,10 +56,14 @@ for _, row in backtest_summary.iterrows():
     n_col = f'n_z{applicable_level}'
     avgpnl_col = f'avgpnl_z{applicable_level}_%'
 
-    if avgpnl_col not in row or pd.isna(row[avgpnl_col]):
+    if winrate_col not in row or pd.isna(row[winrate_col]):
         continue  # no backtest data at this level for this pair — can't evaluate, skip
-    if row[avgpnl_col] < MIN_AVG_PNL_PCT:
-        continue  # avg P&L at this level isn't positive — skip
+    if avgpnl_col not in row or pd.isna(row[avgpnl_col]):
+        continue  # same, but for avg P&L
+    if row[winrate_col] < WIN_RATE_THRESHOLD:
+        continue  # doesn't clear the win rate bar
+    if row[avgpnl_col] <= MIN_AVG_PNL_PCT:
+        continue  # avg P&L at this level isn't positive
 
     signal_rows.append({
         'pair': row['pair'],
@@ -66,8 +71,8 @@ for _, row in backtest_summary.iterrows():
         'current_ratio': round(ratio.iloc[-1], 4),
         'current_z': round(latest_z, 2),
         'applicable_z_level': applicable_level,
+        'winrate_at_level_%': row[winrate_col],
         'avgpnl_at_level_%': row[avgpnl_col],
-        'winrate_at_level_%': row[winrate_col] if winrate_col in row and pd.notna(row[winrate_col]) else None,
         'n_signals_at_level': int(row[n_col]) if n_col in row and pd.notna(row[n_col]) else None,
         'signal_for_next_open': 'SHORT_A_LONG_B' if latest_z > 0 else 'LONG_A_SHORT_B'
     })
@@ -80,7 +85,7 @@ with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
     header_df = pd.DataFrame({
         'Info': [
             f'Sheet generated at: {generated_at_ist}',
-            f'Filter: avg P&L >= {MIN_AVG_PNL_PCT}% at the applicable z-level (no minimum sample size — check n_signals_at_level yourself)',
+            f'Filter: win rate >= {WIN_RATE_THRESHOLD}% AND avg P&L > {MIN_AVG_PNL_PCT}% at the applicable z-level (no minimum sample size — check n_signals_at_level yourself)',
             f'Active signals: {len(daily_signals)}'
         ]
     })
