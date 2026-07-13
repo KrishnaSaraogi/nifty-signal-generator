@@ -9,11 +9,9 @@ generated_at_ist = datetime.now(timezone.utc).astimezone(IST).strftime('%Y-%m-%d
 ROLLING_WINDOW_MONTHS = 1.5
 ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY = 2.0
-MIN_SIGNALS_TO_SHOW = 15  # reliability floor, checked against the z=2.0 sample size
+MIN_SIGNALS_TO_SHOW = 15
 OUTPUT_FILE = 'daily_signal_sheet.xlsx'
 
-# backtest_reference.csv is now the WIDE z-sweep summary:
-# columns: pair, n_z2.0, winrate_z2.0_%, avgpnl_z2.0_%, n_z2.5, winrate_z2.5_%, ... etc.
 backtest_summary = pd.read_csv('backtest_reference.csv')
 
 def parse_pair(pair_str):
@@ -51,9 +49,11 @@ for _, row in qualified.iterrows():
         continue
 
     signal_rows.append({
-        'pair': row['pair'],   # exact match to the 'pair' string in BACKTEST_REFERENCE, used for the link
+        'pair': row['pair'],
+        'signal_date': z.index[-1].date(),
         'current_ratio': round(ratio.iloc[-1], 4),
-        'current_z': round(latest_z, 2)
+        'current_z': round(latest_z, 2),
+        'signal_for_next_open': 'SHORT_A_LONG_B' if latest_z > 0 else 'LONG_A_SHORT_B'
     })
 
 daily_signals = pd.DataFrame(signal_rows)
@@ -89,7 +89,7 @@ for r in range(2, ws_ref.max_row + 1):
     if val:
         pair_to_row[val] = r
 
-signal_header_row = 4  # header lands here since startrow=3 (0-indexed) -> Excel row 4
+signal_header_row = 4
 for r in range(signal_header_row + 1, ws_signals.max_row + 1):
     pair_cell = ws_signals[f'A{r}']
     pair_val = pair_cell.value
