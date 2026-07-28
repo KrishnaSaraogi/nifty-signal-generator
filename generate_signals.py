@@ -50,20 +50,20 @@ for _, row in backtest_summary.iterrows():
 
     applicable_level = get_applicable_z_level(abs(latest_z), Z_ENTRY_LEVELS)
     if applicable_level is None:
-        continue  # below the smallest backtested threshold — no signal
+        continue
 
     winrate_col = f'winrate_z{applicable_level}_%'
     n_col = f'n_z{applicable_level}'
     avgpnl_col = f'avgpnl_z{applicable_level}_%'
 
     if winrate_col not in row or pd.isna(row[winrate_col]):
-        continue  # no backtest data at this level for this pair — can't evaluate, skip
+        continue
     if avgpnl_col not in row or pd.isna(row[avgpnl_col]):
-        continue  # same, but for avg P&L
+        continue
     if row[winrate_col] < WIN_RATE_THRESHOLD:
-        continue  # doesn't clear the win rate bar
+        continue
     if row[avgpnl_col] <= MIN_AVG_PNL_PCT:
-        continue  # avg P&L at this level isn't positive
+        continue
 
     signal_rows.append({
         'pair': row['pair'],
@@ -81,19 +81,29 @@ daily_signals = pd.DataFrame(signal_rows)
 if len(daily_signals):
     daily_signals = daily_signals.sort_values('current_z', key=abs, ascending=False)
 
+# ── README SHEET — parameters for THIS daily signal generator ───────
+readme_rows = [
+    ('Sheet generated at', generated_at_ist),
+    ('Rolling window for live z-score', f'{ROLLING_WINDOW_MONTHS} months (~{ROLLING_WINDOW_DAYS} trading days)'),
+    ('Z-score formula', '(price_ratio - rolling_mean) / rolling_std, recalculated on the raw ratio (A/B)'),
+    ('Applicable z-level rule', 'Largest backtested threshold (from 2.0/2.5/3.0/3.5) that is <= today\'s live |z|. '
+                                'e.g. live z=3.1 uses the z=3.0 backtest stats; live z=3.6 uses z=3.5.'),
+    ('Filter 1 - Win rate', f'winrate_at_level_% must be >= {WIN_RATE_THRESHOLD}%'),
+    ('Filter 2 - Avg P&L', f'avgpnl_at_level_% must be > {MIN_AVG_PNL_PCT}%'),
+    ('Minimum sample size', 'NONE - no floor on n_signals_at_level. Check that column yourself before trusting a row; '
+                            'a pair can qualify on very few historical trades.'),
+    ('Source of backtest stats', 'BACKTEST_REFERENCE sheet (see its own README for backtest methodology)'),
+    ('How to read a signal', "'pair' is clickable and jumps to that pair's row in BACKTEST_REFERENCE"),
+]
+readme_df = pd.DataFrame(readme_rows, columns=['Parameter', 'Value'])
+
 with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
-    header_df = pd.DataFrame({
-        'Info': [
-            f'Sheet generated at: {generated_at_ist}',
-            f'Filter: win rate >= {WIN_RATE_THRESHOLD}% AND avg P&L > {MIN_AVG_PNL_PCT}% at the applicable z-level (no minimum sample size — check n_signals_at_level yourself)',
-            f'Active signals: {len(daily_signals)}'
-        ]
-    })
-    header_df.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, header=False, startrow=0)
-    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=4)
+    readme_df.to_excel(writer, sheet_name='README', index=False)
+    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False)
     backtest_summary.drop(columns=['stock_a', 'stock_b']).to_excel(
         writer, sheet_name='BACKTEST_REFERENCE', index=False)
 
+# ── ADD HYPERLINKS: clicking a pair in SIGNALS_TODAY jumps to its row in BACKTEST_REFERENCE ──
 wb = load_workbook(OUTPUT_FILE)
 ws_signals = wb['SIGNALS_TODAY']
 ws_ref = wb['BACKTEST_REFERENCE']
@@ -110,7 +120,7 @@ for r in range(2, ws_ref.max_row + 1):
     if val:
         pair_to_row[val] = r
 
-signal_header_row = 5
+signal_header_row = 1  # no more manual header block — pandas writes the real header at row 1 now
 for r in range(signal_header_row + 1, ws_signals.max_row + 1):
     pair_cell = ws_signals[f'A{r}']
     pair_val = pair_cell.value
