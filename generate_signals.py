@@ -11,6 +11,8 @@ ROLLING_WINDOW_DAYS = int(21 * ROLLING_WINDOW_MONTHS)
 Z_ENTRY_LEVELS = [2.0, 2.5, 3.0, 3.5]
 WIN_RATE_THRESHOLD = 75.0
 MIN_AVG_PNL_PCT = 0.0
+STOP_LOSS_PCT = 3.0    # from the backtest — documented here for reference
+TAKE_PROFIT_PCT = 5.0  # from the backtest — documented here for reference
 OUTPUT_FILE = 'daily_signal_sheet.xlsx'
 
 backtest_summary = pd.read_csv('backtest_reference.csv')
@@ -81,7 +83,7 @@ daily_signals = pd.DataFrame(signal_rows)
 if len(daily_signals):
     daily_signals = daily_signals.sort_values('current_z', key=abs, ascending=False)
 
-# ── README SHEET — parameters for THIS daily signal generator ───────
+# ── README CONTENT ──────────────────────────────────────────────────
 readme_rows = [
     ('Sheet generated at', generated_at_ist),
     ('Rolling window for live z-score', f'{ROLLING_WINDOW_MONTHS} months (~{ROLLING_WINDOW_DAYS} trading days)'),
@@ -92,16 +94,34 @@ readme_rows = [
     ('Filter 2 - Avg P&L', f'avgpnl_at_level_% must be > {MIN_AVG_PNL_PCT}%'),
     ('Minimum sample size', 'NONE - no floor on n_signals_at_level. Check that column yourself before trusting a row; '
                             'a pair can qualify on very few historical trades.'),
-    ('Source of backtest stats', 'BACKTEST_REFERENCE sheet (see its own README for backtest methodology)'),
+    ('EXIT RULE (from backtest)', 'Whichever fires first, checked daily:'),
+    ('  - Stop-loss', f'portfolio P&L <= -{STOP_LOSS_PCT}%'),
+    ('  - Take-profit', f'portfolio P&L >= +{TAKE_PROFIT_PCT}%'),
+    ('  - Mean-reversion', "ratio crosses back to that day's rolling mean"),
+    ('P&L calculation', '0.5 x leg_A_return + 0.5 x leg_B_return (dollar-neutral, sign-flipped for the short leg), '
+                        f'capped at -{STOP_LOSS_PCT}% / +{TAKE_PROFIT_PCT}%'),
+    ('NOTE on exits', 'This sheet generates ENTRY signals only. It does not track open positions or alert you '
+                      'when an exit condition is hit - you must monitor that yourself.'),
+    ('Source of backtest stats', 'BACKTEST_REFERENCE sheet'),
     ('How to read a signal', "'pair' is clickable and jumps to that pair's row in BACKTEST_REFERENCE"),
 ]
 readme_df = pd.DataFrame(readme_rows, columns=['Parameter', 'Value'])
 
+# ── WRITE: SIGNALS_TODAY first (with info header), BACKTEST_REFERENCE, README last ──
 with pd.ExcelWriter(OUTPUT_FILE, engine='openpyxl') as writer:
-    readme_df.to_excel(writer, sheet_name='README', index=False)
-    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False)
+    header_df = pd.DataFrame({
+        'Info': [
+            f'Sheet generated at: {generated_at_ist}',
+            f'Active signals: {len(daily_signals)}'
+        ]
+    })
+    header_df.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, header=False, startrow=0)
+    daily_signals.to_excel(writer, sheet_name='SIGNALS_TODAY', index=False, startrow=3)
+
     backtest_summary.drop(columns=['stock_a', 'stock_b']).to_excel(
         writer, sheet_name='BACKTEST_REFERENCE', index=False)
+
+    readme_df.to_excel(writer, sheet_name='README', index=False)
 
 # ── ADD HYPERLINKS: clicking a pair in SIGNALS_TODAY jumps to its row in BACKTEST_REFERENCE ──
 wb = load_workbook(OUTPUT_FILE)
@@ -120,7 +140,7 @@ for r in range(2, ws_ref.max_row + 1):
     if val:
         pair_to_row[val] = r
 
-signal_header_row = 1  # no more manual header block — pandas writes the real header at row 1 now
+signal_header_row = 4  # startrow=3 (0-indexed) means the real header lands on Excel row 4
 for r in range(signal_header_row + 1, ws_signals.max_row + 1):
     pair_cell = ws_signals[f'A{r}']
     pair_val = pair_cell.value
