@@ -31,10 +31,19 @@ def get_applicable_z_level(current_abs_z, levels):
 
 all_tickers = pd.unique(backtest_summary[['stock_a', 'stock_b']].values.ravel())
 prices = {}
+failed_tickers = []
 for t in all_tickers:
-    data = yf.download(t, period='4mo', auto_adjust=False, progress=False)['Close'].squeeze()
-    if len(data) > 0:
-        prices[t] = data
+    try:
+        data = yf.download(t, period='4mo', auto_adjust=False, progress=False)['Close'].squeeze()
+        if isinstance(data, pd.Series) and len(data) > ROLLING_WINDOW_DAYS + 5:
+            prices[t] = data
+        else:
+            failed_tickers.append(t)
+    except Exception:
+        failed_tickers.append(t)
+
+if failed_tickers:
+    print(f"WARNING: {len(failed_tickers)} tickers returned insufficient data and were skipped: {failed_tickers}")
 
 signal_rows = []
 for _, row in backtest_summary.iterrows():
